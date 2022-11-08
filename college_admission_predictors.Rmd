@@ -1,0 +1,408 @@
+---
+title: "Personalized Capstone Project"
+author: "Emma Jean Boley"
+date: "2022-11-07"
+output:
+  word_document: default
+  html_document: default
+---
+
+#Loading packages and librabies
+```{r echo=TRUE}
+if(!require(lubridate))install.packages("lubridate")
+if(!require(readr))install.packages("readr")
+if(!require(ggplot2))install.packages("ggplot2")
+if(!require(tidyverse))install.packages("tidyverse")
+if(!require(caret)) install.packages("caret")
+if(!require(rpart)) install.packages("rpart")
+if(!require(dplyr)) install.packages("dplyr")
+if(!require(rpart.plot)) installed.packages("rpart.plot")
+
+library(rpart.plot)
+library(caret)
+library(tidyverse)
+library(rpart)
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+```
+
+#Set working directory
+```{r echo=TRUE}
+getwd()
+setwd("C:/Users/eboley/OneDrive - Partners In Health/Desktop/Data/project")
+```
+
+#Set Relative folder path
+```{r}
+College <- read.csv("R/College_admission.csv")
+```
+
+# 3 significant digits
+```{r echo=TRUE}
+options(digits = 3)
+```
+
+#Recoding categorical & numerical variables
+```{r echo=TRUE}
+College_clean <- College %>%
+  mutate(GreLevels=ifelse(gre<440,"Low",ifelse(gre<580,"Medium","High"))) %>%
+  mutate(Gender=ifelse(Gender_Male == 0, "female","male")) %>%
+  mutate(Demo = recode(Race,
+                       "1" = "Hispanics",
+                       "2" = "Asian",
+                       "3" = "African-American"))%>%
+  mutate(Socioeco = recode(ses,
+                           "1" = "Low",
+                           "2" = "Medium",
+                           "3" = "High"))
+
+```
+
+#Summary of data
+```{r echo=TRUE}
+summary(College_clean)
+str(College_clean)
+
+#Data type as numeric (admit, ses, race, gender, and rank), GreLevels as character variable
+```
+
+#Transforming categorical variables (admit, ses, gender, rank) 
+```{r echo=TRUE}
+College_clean$admit <- as.factor(College_clean$admit)
+College_clean$ses <- as.factor(College_clean$ses)
+College_clean$Race <- as.factor(College_clean$Race)
+College_clean$Gender_Male <- as.factor(College_clean$Gender_Male)
+College_clean$rank <- as.factor(College_clean$rank)
+College_clean$GreLevels <- as.factor(College_clean$GreLevels)
+College_clean$Gender <- as.factor(College_clean$Gender)
+College_clean$Demo <- as.factor(College_clean$Demo)
+College_clean$Socioeco <- as.factor(College_clean$Socioeco)
+```
+
+#Finding missing data
+```{r echo=TRUE}
+is.na(College_clean)
+sum(is.na(College_clean))
+
+#there is no missing values in dataset
+```
+
+#Distribution of gre & gpa scores among gender
+```{r echo=TRUE}
+College_clean %>%
+  ggplot(aes(Gender,gre))+
+  geom_boxplot()
+
+College_clean %>%
+  ggplot(aes(Gender,gpa))+
+  geom_boxplot()
+```
+
+#Variation in gre & gpa by gender, race and socioenomic status
+```{r echo=TRUE}
+College_clean %>%
+  ggplot(aes(Gender,gre, fill = Gender))+
+  geom_boxplot()+
+  facet_grid(~Demo)
+
+College_clean %>%
+  ggplot(aes(Gender,gpa, fill = Gender))+
+  geom_boxplot()+
+  facet_grid(~Demo)
+
+College_clean %>%
+  ggplot(aes(Socioeco, gre, fill = Gender))+
+  #geom_density(alpha = 0.5)+
+  geom_boxplot()+
+  facet_wrap(~Demo)+
+  theme_bw()
+
+College_clean %>%
+  ggplot(aes(Socioeco, gpa, fill = Gender))+
+  #geom_density(alpha = 0.5)+
+  geom_boxplot()+
+  facet_wrap(~Demo)+
+  theme_bw()
+```
+
+#Find outlers in data set
+```{r echo=TRUE}
+boxplot(College_clean)
+boxplot(College_clean$gre)
+boxplot(College_clean$gpa)
+```
+
+#Identifying of outliers
+```{r echo=TRUE}
+boxplot.stats(College_clean$gpa)$out
+boxplot.stats(College_clean$gre)$out
+#GPA outlier is 2.26
+#GRE outlier are 300 300 220 300
+```
+
+#Removing outliers
+```{r echo=TRUE}
+College_clean <- subset(College_clean, gpa != 2.26)
+College_clean <- subset(College_clean, gre != 300 & gre !=220)
+```
+
+#Confirmation outliers removed
+```{r echo=TRUE}
+boxplot(College_clean$gpa)
+boxplot(College_clean$gre)
+```
+
+#Creating train and test sets
+```{r echo=TRUE}
+set.seed(42, sample.kind = "Rounding")
+
+test_index <- createDataPartition(College_clean$admit, times = 1, p = 0.2, list = FALSE)
+College_test <- College_clean[test_index,]
+College_train <- College_clean[-test_index,]
+
+nrow(College_train)
+nrow(College_test)
+```
+
+#Proportion of individuals in the training set admitted
+```{r echo=TRUE}
+mean(College_train$admit == 1)
+```
+
+#Accuracy of guessing method
+```{r echo=TRUE}
+set.seed(3, sample.kind = "Rounding")
+guess <- sample(c(0,1), nrow(College_test), replace = TRUE)
+mean(guess == College_test$admit)
+
+```
+
+#Proportion of females admitted
+```{r echo=TRUE}
+College_train %>%
+  group_by(Gender_Male) %>%
+  summarize(Admit = mean(admit == 1)) %>%
+  filter(Gender_Male == "0") %>%
+  pull(Admit)
+```
+
+#Proportion of males admitted
+```{r echo=TRUE}
+College_train %>%
+  group_by(Gender_Male) %>%
+  summarize(Admit = mean(admit == 1)) %>%
+  filter(Gender_Male == "1") %>%
+  pull(Admit)
+```
+
+#Predicting admission by sex
+# predict admission = 1 if male, 0 if female
+```{r echo=TRUE}
+sex_model <- ifelse(College_test$Gender == "female", 0, 1)
+```
+
+#Calculate accuracy
+```{r echo=TRUE}
+mean(sex_model == College_test$admit)
+```
+
+#Predicting admission by socioeconomic class
+```{r echo=TRUE}
+College_train %>%
+  group_by(Socioeco) %>%
+  summarize(Admit = mean(admit == 1))
+```
+
+#Accuracy of class-based prediction method
+# predict admission only if socioeconomic class is low
+```{r echo=TRUE}
+class_model <- ifelse(College_test$ses == 1, 1, 0)
+```
+
+#Calculate accuracy
+```{r echo=TRUE}
+mean(class_model == College_test$admit)
+```
+
+#Prediction of admission based on class and sex
+```{r echo=TRUE}
+College_train %>%
+  group_by(Gender, Socioeco) %>%
+  summarize(admit = mean(admit == 1))
+  #filter(admit > 0.5)
+```
+
+#Prediction of admission based on class and sex
+```{r echo=TRUE}
+College_train %>%
+  group_by(Gender, Race) %>%
+  summarize(admit = mean(admit == 1))
+```
+
+#Prediction of admission based on race and sex
+```{r echo=TRUE}
+College_train %>%
+  group_by(Gender, Race) %>%
+  summarize(admit = mean(admit == 1))
+#filter(admit > 0.5)
+```
+
+#Confusion matrix
+```{r echo=TRUE}
+confusionMatrix(data = factor(sex_model), reference = factor(College_test$admit))
+confusionMatrix(data = factor(class_model), reference = factor(College_test$admit))
+```
+
+#F means score
+```{r echo=TRUE}
+F_meas(data = factor(sex_model), reference = College_test$admit)
+F_meas(data = factor(class_model), reference = College_test$admit)
+```
+
+#Admission by gre and gpa using LDA and QDA
+#The accuracy on the test set for the LDA model
+```{r echo=TRUE}
+set.seed(1, sample.kind = "Rounding")
+
+train_lda <- train(admit ~ gpa, method = "lda", data = College_train)
+lda_preds <- predict(train_lda, College_test)
+mean(lda_preds == College_test$admit)
+
+train_lda_a <- train(admit ~ gre, method = "lda", data = College_train)
+lda_preds_a <- predict(train_lda_a, College_test)
+mean(lda_preds_a == College_test$admit)
+```
+
+#The accuracy on the test set for the QDA model
+```{r echo=TRUE}
+train_qda <- train(admit ~ gpa, method = "qda", data = College_train)
+qda_preds <- predict(train_qda, College_test)
+mean(qda_preds == College_test$admit)
+
+train_qda_a <- train(admit ~ gre, method = "qda", data = College_train)
+qda_preds_a <- predict(train_qda_a, College_test)
+mean(qda_preds_a == College_test$admit)
+```
+
+#The accuracy of your model (using gre as the only predictor) on the test set
+```{r echo=TRUE}
+train_glm_gre <- train(admit ~ gre, method = "glm", data = College_train)
+glm_preds_gre <- predict(train_glm_gre, College_test)
+mean(glm_preds_gre == College_test$admit)
+```
+
+#The accuracy of your model (using these four predictors) on the test
+```{r echo=TRUE}
+train_glm <- train(admit ~ gre + gpa + ses + Race, method = "glm", data = College_train)
+glm_preds <- predict(train_glm, College_test)
+mean(glm_preds == College_test$admit)
+```
+
+#The accuracy of your model (using all predictors) on the test set
+```{r echo=TRUE}
+str(College_train)
+college_train_all <- College_train %>% select (admit:rank)
+college_test_all <- College_test %>% select (admit:rank)
+
+train_glm_all <- train(admit ~ ., method = "glm", data = college_train_all)
+train_glm_all
+
+glm_all_preds <- predict(train_glm_all, college_test_all)
+glm_all_preds
+
+mean(glm_all_preds == college_test_all$admit)
+```
+
+#kNN model
+```{r echo=TRUE}
+set.seed(6, sample.kind = "Rounding")
+
+train_knn <- train(admit ~ .,
+                   method = "knn",
+                   data = college_train_all,
+                   tuneGrid = data.frame(k = seq(3, 51, 2)))
+train_knn$bestTune
+
+```
+
+#Highest Knn accuracy
+```{r echo=TRUE}
+ggplot(train_knn)
+```
+
+#Accuracy of the kNN model
+```{r echo=TRUE}
+knn_preds <- predict(train_knn, college_test_all)
+mean(knn_preds == college_test_all$admit)
+```
+
+#Cross-validation of Knn 
+```{r echo=TRUE}
+set.seed(8, sample.kind = "Rounding") 
+
+train_knn_cv <- train(admit ~ .,
+                      method = "knn",
+                      data = college_train_all,
+                      tuneGrid = data.frame(k = seq(3, 51, 2)),
+                      trControl = trainControl(method = "cv", number = 10, p = 0.9))
+train_knn_cv$bestTune
+```
+
+
+#The accuracy of cross-validated kNN model
+```{r echo=TRUE}
+knn_cv_preds <- predict(train_knn_cv, college_test_all)
+mean(knn_cv_preds == college_test_all$admit)
+```
+
+
+#Classification tree model
+```{r echo=TRUE}
+set.seed(10, sample.kind = "Rounding")
+train_rpart <- train(admit ~ ., 
+                     method = "rpart",
+                     tuneGrid = data.frame(cp = seq(0, 0.05, 0.002)),
+                     data = college_train_all)
+train_rpart$bestTune
+
+```
+
+#The accuracy of the decision tree model
+```{r echo=TRUE}
+rpart_preds <- predict(train_rpart, college_test_all)
+mean(rpart_preds == college_test_all$admit)
+
+```
+
+#Inspect final model
+```{r echo=TRUE}
+train_rpart$finalModel
+```
+
+#Random forest model
+```{r echo=TRUE}
+set.seed(14, sample.kind = "Rounding")
+
+train_rf <- train(admit ~ .,
+                  data = college_train_all,
+                  method = "rf",
+                  ntree = 100,
+                  tuneGrid = data.frame(mtry = seq(1:7)))
+train_rf$bestTune
+```
+
+#The accuracy of the random forest model
+```{r echo=TRUE}
+rf_preds <- predict(train_rf, college_test_all)
+mean(rf_preds == college_test_all$admit)
+```
+
+#The most important variable
+```{r echo=TRUE}
+varImp(train_rf) 
+```
+
+
+
